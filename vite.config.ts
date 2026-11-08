@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// base = имя репозитория на GitHub Pages (https://<user>.github.io/cristalix-pack-converter/)
+// Относительный base: сборка работает и на GitHub Pages (/<repo>/), и локально, и в десктоп-обёртке.
 export default defineConfig({
-  base: process.env.GITHUB_PAGES ? '/cristalix-pack-converter/' : '/',
+  base: './',
   plugins: [react()],
 })
