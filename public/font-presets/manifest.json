@@ -1,0 +1,20 @@
+[
+  {
+    "id": "cristalix-font",
+    "name": "Cristalix Font",
+    "description": "Кириллица и эмодзи",
+    "file": "cristalix-font.zip"
+  },
+  {
+    "id": "faithful-font",
+    "name": "Faithful Font",
+    "description": "Латиница, кириллица, греческий, рамки",
+    "file": "faithful-font.zip"
+  },
+  {
+    "id": "daku-gold",
+    "name": "Daku Gold",
+    "description": "Латиница, кириллица, греческий",
+    "file": "daku-gold.zip"
+  }
+]
