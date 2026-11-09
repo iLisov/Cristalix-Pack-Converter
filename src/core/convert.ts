@@ -15,6 +15,7 @@ import { guiBaseAsset, playerSlotGrids } from './gui'
 import { avoidPredicateOrBug, blockstateTargets } from './blockstates'
 import { buildCitRules, itemBase } from './items'
 import { buildWolfProperties, getWolfVariantIndex, getWolfVariantTarget } from './random-entities'
+import { getLayoutMismatch, pngSize } from './entity-layouts'
 import { MODEL_BASE, stateModelRefs, type ModelBase } from './model-base'
 import { PAINTING_ATLAS, PAINTING_LAYOUT, SYNONYMS } from './mappings'
 import { resolveTexture, type TextureResolution } from './textures'
@@ -203,6 +204,9 @@ export function planPack({ files, index, options, preset, overrides = {}, base, 
   /** Текстура блока → отдельная иконка предмета, если пак рисует предмет иначе, чем блок. */
   const itemIcons = new Map<string, string>()
   const wolfIndex = getWolfVariantIndex(pngs.map((png) => png.rel))
+  const blockWidths = pngs.filter((png) => png.rel.startsWith('block/')).slice(0, 400)
+    .map((png) => pngSize(files.get(png.source)!)?.w).filter((width): width is number => !!width).sort((left, right) => left - right)
+  const packScale = Math.max(1, (blockWidths[Math.floor(blockWidths.length / 2)] ?? 16) / 16)
   if (wolfIndex.size) {
     claim({ source: '__converter/mcpatcher/mob/wolf/wolf.properties', group: 'other', targets: ['assets/minecraft/mcpatcher/mob/wolf/wolf.properties'],
       status: 'converted', notes: [{ level: 'info', text: `Окраски волков по биомам: ${[...wolfIndex.keys()].join(', ')}.` }],
@@ -307,7 +311,12 @@ export function planPack({ files, index, options, preset, overrides = {}, base, 
       status = 'skipped'
       notes.push({ level: 'info', text: 'Не добавлено: включите «Оставлять неизвестные файлы», если нужно.' })
     }
-    const targets = status === 'skipped' ? [] : r.targets.map((t) => (t.startsWith('assets/') ? t : `${T}${t}.png`))
+    const targets = (status === 'skipped' ? [] : r.targets.map((t) => (t.startsWith('assets/') ? t : `${T}${t}.png`))).filter((target) => {
+      const mismatch = !manual && target.startsWith(T) && getLayoutMismatch(target.slice(T.length, -'.png'.length), files.get(source)!, packScale)
+      if (mismatch) notes.push({ level: 'warn', text: `Не перенесено в ${target.slice(T.length)}: раскладка модели другая (${mismatch}). Клиент оставит свою текстуру.` })
+      return !mismatch
+    })
+    if (!targets.length && status !== 'skipped' && r.targets.length) status = 'skipped'
     const resize = options.maxResolution > 0 && (group === 'blocks' || group === 'items')
     const entry: PlanEntry = {
       source,
@@ -488,9 +497,15 @@ export function planPack({ files, index, options, preset, overrides = {}, base, 
     return legacy.models[local] ?? local
   }
 
+  // Блокстейт новых версий ссылается на модель от models/, а 1.12 всегда дописывает block/: «tripwire/dot» → block/tripwire/dot
+  const looseStateModels = new Set(rest.filter((path) => /^assets\/minecraft\/blockstates\/.+\.json$/.test(path.slice(root.length)))
+    .flatMap((path) => stateModelRefs(parseJson(text(files.get(path)!))))
+    .map((ref) => ref.replace(/^minecraft:/, ''))
+    .filter((ref) => !ref.includes(':') && !/^(block|item|builtin)\//.test(ref)))
   function modelTargets(name: string): string[] {
     if ((name === 'block/grass' || name === 'item/grass') && (mcmeta.format ?? 99) > 3) return [name.replace(/grass$/, 'tall_grass')]
     const candidates = [name]
+    if (looseStateModels.has(name)) candidates.push(`block/${name}`)
     const m = /^(block|item)\/([^/]+)$/.exec(name)
     if (!m) return candidates
     const mapped = legacy.models[m[2]]
@@ -682,8 +697,12 @@ export function planPack({ files, index, options, preset, overrides = {}, base, 
     const outInner = dir === 'optifine' ? 'mcpatcher' + inner.slice('optifine'.length) : inner
     const outPath = `assets/${ns}/${outInner}`
     if (isOptifine && inner.endsWith('.properties')) {
-      const r = convertProperties(text(files.get(path)!), index, { resolved: isMc ? resolved : undefined, modern: dir === 'optifine' || (mcmeta.format ?? 0) >= 4 })
+      const source = readOptifineProperties(path, files, root)
+      const folder = path.slice(0, path.lastIndexOf('/') + 1)
+      const r = convertProperties(source.text, index, { resolved: isMc ? resolved : undefined, modern: dir === 'optifine' || (mcmeta.format ?? 0) >= 4,
+        hasLocalTile: (name) => files.has(`${folder}${name}.png`) })
       if (dir === 'optifine') r.notes.unshift({ level: 'info', text: 'optifine/ → mcpatcher/.' })
+      r.notes.unshift(...source.notes)
       claim({ source: path, group: 'other', targets: r.text === null ? [] : [outPath], status: r.text === null ? 'skipped' : 'converted', notes: r.notes, transform: { type: 'text', text: r.text ?? '' } })
       continue
     }
@@ -992,6 +1011,9 @@ export async function buildPack(
       const source = files.get(entry.source)!
       data = source
       if (t.type === 'resize' && (await ops.size(source)).w > t.width) data = await ops.resize(source, t.width)
+      if (entry.source.endsWith('.png') && !files.has(entry.source + '.mcmeta') && entry.targets.some((target) => ATLAS_TARGET.test(target))) {
+        data = await toSquare(data, ops)
+      }
     }
     for (const target of entry.targets) out.set(target, data)
     onProgress?.(++done, active.length)
@@ -1187,4 +1209,43 @@ function fillChildTextureFallbacks(modelEntries: Map<string, PlanEntry>, index: 
     entry.transform = { type: 'text', text: JSON.stringify(model, null, 2) }
     entry.notes.push({ level: 'info', text: `Дочерние модели не задают новые текстуры родителя — добавлены запасные: ${added.join(', ')}.` })
   }
+}
+
+const RULE_KEYS = /^\s*(tiles|method|matchBlocks|matchTiles|blocks|items|format|color|source|texture|model)\s*=/m
+
+/**
+ * Текст правила OptiFine с тем, что OptiFine вывел бы сам: заглушку Respackopts заменяет первый
+ * существующий fallback из .rpo, блок или тайл из имени файла записывается явно, чтобы перевести его в 1.12.
+ */
+function readOptifineProperties(path: string, files: Files, root: string): { text: string; notes: Note[] } {
+  const notes: Note[] = []
+  let body = text(files.get(path)!)
+  const rpo = files.get(path + '.rpo')
+  if (rpo && !RULE_KEYS.test(body)) {
+    const rpoText = text(rpo)
+    const list = /fallbacks\s*:\s*\[([\s\S]*?)\]/.exec(rpoText)?.[1] ?? /fallback\s*:\s*(["'][^"']+["'])/.exec(rpoText)?.[1] ?? ''
+    const fallback = [...list.matchAll(/["']([^"']+)["']/g)].map((match) => root + match[1]).find((candidate) => files.has(candidate))
+    if (fallback) {
+      body = text(files.get(fallback)!)
+      notes.push({ level: 'info', text: `Заглушка Respackopts заменена правилом ${fallback.slice(root.length)}.` })
+    }
+  }
+  const stem = path.slice(path.lastIndexOf('/') + 1, -'.properties'.length)
+  if (/\/ctm\//.test(path) && !/^\s*(matchBlocks|matchTiles)\s*=/m.test(body)) {
+    body = (stem.startsWith('block_') ? `matchBlocks=${stem.slice('block_'.length)}` : `matchTiles=${stem}`) + '\n' + body
+  } else if (/\/colormap\/blocks\//.test(path) && !/^\s*blocks\s*=/m.test(body)) {
+    body = `blocks=${stem}\n` + body
+  }
+  return { text: body, notes }
+}
+
+/** Текстуры, которые сшиваются в атлас блоков и предметов. */
+const ATLAS_TARGET = /\/(textures\/(blocks|items)|mcpatcher\/(ctm|cit))\//
+
+/** Атлас 1.12 без .mcmeta принимает только квадрат («broken aspect ratio»); UV моделей нормированы, растяжение их не сдвигает. */
+async function toSquare(data: Uint8Array, ops: ImageOps): Promise<Uint8Array> {
+  const { w, h } = pngSize(data) ?? await ops.size(data)
+  if (w === h) return data
+  const side = Math.max(w, h)
+  return ops.compose(side, side, [{ data, replace: true, dx: 0, dy: 0, dw: side, dh: side }])
 }

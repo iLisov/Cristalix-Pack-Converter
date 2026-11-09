@@ -44,3 +44,33 @@ describe('OptiFine → 1.12', () => {
     expect(convertProperties('matchBlocks=grass\nbiomes=ice_flats IcePlains', index, { modern: false }).text).toBe('matchBlocks=grass\nbiomes=iceplains IcePlains')
   })
 })
+
+describe('OptiFine новых версий → OptiFine 1.12: пути и синтаксис', () => {
+  it('вложенный тайл пишет полным путём, голое имя оставляет', () => {
+    const resolved = new Map([['block/leaves/spruce_leaves', ['blocks/leaves/spruce_leaves']]])
+    expect(convertProperties('matchTiles=minecraft:block/leaves/spruce_leaves stone', index, { resolved }).text).toBe('matchTiles=textures/blocks/leaves/spruce_leaves stone')
+    expect(convertProperties('tiles=0-3 minecraft:block/leaves/spruce_leaves', index, { resolved }).text).toBe('tiles=0-3 textures/blocks/leaves/spruce_leaves')
+  })
+
+  it('переносит пути optifine/ и ~/ в mcpatcher/', () => {
+    expect(convertProperties('tiles=optifine/ctm/generic/packed_ice/0.png ~/ctm/x/1.png', index).text).toBe('tiles=mcpatcher/ctm/generic/packed_ice/0.png mcpatcher/ctm/x/1.png')
+    expect(convertProperties('texture=optifine/cit/sword.png', index).text).toBe('texture=mcpatcher/cit/sword.png')
+  })
+
+  it('заменяет синтаксис, которого нет в старом OptiFine', () => {
+    expect(convertProperties('connect=state\nsymmetry=sides\nheights=39..60', index).text).toBe('connect=block\nheights=39-60')
+  })
+
+  it('двойная плита — отдельный блок 1.12', () => {
+    expect(convertProperties('matchBlocks=minecraft:acacia_slab:type=double', index).text).toBe('matchBlocks=double_wooden_slab:variant=acacia')
+    expect(convertProperties('matchBlocks=acacia_slab:type=bottom', index).text).toBe('matchBlocks=wooden_slab:variant=acacia:half=bottom')
+  })
+})
+
+describe('голое имя тайла без файла в папке', () => {
+  it('ссылается на текстуру блока, а существующий файл в папке не трогает', () => {
+    const resolved = new Map([['block/spruce_log_top', ['blocks/log_spruce_top']]])
+    const r = convertProperties('tiles=0-3 spruce_log_top local <skip>', index, { resolved, hasLocalTile: (name) => name === 'local' })
+    expect(r.text).toBe('tiles=0-3 textures/blocks/log_spruce_top local <skip>')
+  })
+})

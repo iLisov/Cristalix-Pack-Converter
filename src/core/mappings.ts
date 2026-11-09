@@ -39,6 +39,7 @@ function build(): { blocks: Record<string, string>; items: Record<string, string
     b[`${n}_log_top`] = `log_${o}_top`
     b[`${n}_leaves`] = `leaves_${o}`
   }
+  b.iron_chain = 'chain'
   b.oak_sapling = 'sapling_oak'
   b.spruce_sapling = 'sapling_spruce'
   b.birch_sapling = 'sapling_birch'

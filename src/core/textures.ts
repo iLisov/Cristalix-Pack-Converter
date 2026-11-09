@@ -118,5 +118,6 @@ export function convertTextureRef(ref: string, idx: ClientIndex, resolved?: Map<
   const fromPack = resolved?.get(path)
   if (fromPack) return fromPack[0]
   if (/^(block|item)\//.test(path)) return resolveTexture(path, idx).targets[0]
-  return path
+  const known = resolveTexture(path, idx)
+  return known.status === 'unknown' ? path : known.targets[0]
 }

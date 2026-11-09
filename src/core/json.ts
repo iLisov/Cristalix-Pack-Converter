@@ -18,6 +18,7 @@ const info = (text: string): Note => ({ level: 'info', text })
 
 /** Углы поворота элементов, которые принимает 1.12 (иначе модель не загрузится). */
 const VALID_ANGLES = [-45, -22.5, 0, 22.5, 45]
+const LATER_PREDICATES = new Set(['custom_model_data', 'trim_type', 'charged', 'firework', 'honey_level', 'level', 'filled', 'tooting', 'brushing'])
 /** Поля моделей новых версий, которых нет в 1.12. */
 const MODEL_DROP = ['gui_light', 'render_type', 'loader', 'textures_atlas']
 
@@ -147,9 +148,11 @@ export function convertModel(
       if (typeof override.model === 'string') override.model = override.model.replace(/^(minecraft:)?optifine\//, 'mcpatcher/')
       return override
     })
-    out.overrides = overrides
-    const usesCmd = overrides.some((o) => (o as Json)?.predicate && 'custom_model_data' in ((o as Json).predicate as Json))
-    if (usesCmd) notes.push(warn('custom_model_data появился в 1.14 — в 1.12 такие подмены работать не будут. Используйте CIT (mcpatcher).'))
+    // Модели override 1.12 грузит, даже если предикат никогда не сработает: отсутствующая модель — ошибка загрузки
+    const kept = overrides.filter((override) => !Object.keys(((override as Json)?.predicate ?? {}) as Json).some((key) => LATER_PREDICATES.has(key.replace(/^minecraft:/, ''))))
+    if (kept.length < overrides.length) notes.push(warn(`Убрано ${overrides.length - kept.length} override с предикатами новых версий (отделка брони, custom_model_data и т.п.): в 1.12 они не срабатывают. Для подмен используйте CIT.`))
+    if (kept.length) out.overrides = kept
+    else delete out.overrides
   }
 
   return { text: stringify(out), notes }

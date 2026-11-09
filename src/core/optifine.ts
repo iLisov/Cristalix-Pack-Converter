@@ -232,6 +232,8 @@ export interface PropertiesContext {
   resolved?: Map<string, string[]>
   /** Правило из optifine/ (id новых версий). Для mcpatcher/ id уже в формате 1.12. */
   modern?: boolean
+  /** Есть ли PNG с таким именем в папке правила; без файла голое имя тайла — текстура блока. */
+  hasLocalTile?: (name: string) => boolean
 }
 
 /** Разбор значения matchBlocks: [ns:]name[:prop=v1,v2[:prop2=v3]]. */
@@ -249,9 +251,12 @@ function convertBlockList(value: string, idx: ClientIndex, modern: boolean, drop
   for (const token of value.split(/\s+/).filter(Boolean)) {
     const { ns, name, props, numeric } = parseBlockToken(token)
     if (numeric || (ns && ns !== 'minecraft') || !modern) { out.push({ id: token, props: [] }); continue }
-    const extra = props.filter(([k]) => k !== 'waterlogged')
-      .map(([k, v]): [string, string] => k === 'type' && /^(top|bottom)$/.test(v) && name.endsWith('_slab') ? ['half', v] : [k, v])
-    const old = TABLES.blocks[name]
+    const double = name.endsWith('_slab') && props.some(([key, prop]) => key === 'type' && prop === 'double')
+    const extra = props.filter(([key]) => key !== 'waterlogged' && !(double && key === 'type'))
+      .map(([key, prop]): [string, string] => key === 'type' && /^(top|bottom)$/.test(prop) && name.endsWith('_slab') ? ['half', prop] : [key, prop])
+    const single = TABLES.blocks[name]
+    const doubleId = double && (single ? DOUBLE_SLABS[single.id] : idx.blockstates[name.replace(/_slab$/, '_double_slab')] && name.replace(/_slab$/, '_double_slab'))
+    const old = doubleId ? { id: doubleId, props: single?.props } : single
     if (old) out.push({ id: old.id, props: [...Object.entries(old.props ?? {}), ...extra] })
     else if (idx.blockstates[name] || Object.keys(idx.blockstates).length === 0) out.push({ id: name, props: extra })
     else dropped.push(name)
@@ -276,15 +281,24 @@ function convertBlockList(value: string, idx: ClientIndex, modern: boolean, drop
 }
 
 /** Имя спрайта блока для matchTiles/connectTiles: как его назовёт итоговый пак. */
+const OPTIFINE_PATH = /^(?:minecraft:)?(?:optifine\/|~\/)/
+
+const toMcpatcherPath = (path: string) => path.replace(OPTIFINE_PATH, 'mcpatcher/')
+
 function getTileNames(tile: string, resolved: Map<string, string[]> | undefined, idx: ClientIndex): string[] {
+  if (OPTIFINE_PATH.test(tile)) return [toMcpatcherPath(tile)]
   const m = /^(?:minecraft:)?(?:textures\/)?(?:block\/)?([^:]+?)(?:\.png)?$/.exec(tile)
   if (!m || tile.includes('/') && !/^(?:minecraft:)?(?:textures\/)?block\//.test(tile)) return [tile]
   const name = m[1]
   const fromPack = resolved?.get(`block/${name}`)?.filter((path) => path.startsWith('blocks/')).map((path) => path.slice('blocks/'.length))
-  if (fromPack?.length) return fromPack
   const old = RENAMES.blocks[name]
-  if (old && (idx.textures.size === 0 || idx.textures.has(`blocks/${old}`))) return [old]
-  return [tile.replace(/^minecraft:/, '').replace(/^(?:textures\/)?block\//, '').replace(/\.png$/, '')]
+  const names = fromPack?.length ? fromPack : old && (idx.textures.size === 0 || idx.textures.has(`blocks/${old}`)) ? [old] : [name]
+  // имя без «/» OptiFine 1.12 ищет в textures/blocks, а со «/» — как путь от assets/minecraft
+  return names.map((path) => path.includes('/') ? `textures/blocks/${path}` : path)
+}
+
+const DOUBLE_SLABS: Record<string, string> = {
+  wooden_slab: 'double_wooden_slab', stone_slab: 'double_stone_slab', stone_slab2: 'double_stone_slab2', purpur_slab: 'purpur_double_slab',
 }
 
 function isItemKnown(id: string, idx: ClientIndex): boolean {
@@ -346,6 +360,31 @@ export function convertProperties(text: string, idx: ClientIndex, ctx: Propertie
       return `${indent}biomes${eq}${negate ? '!' : ''}${mapped.join(' ')}`
     }
 
+    if (key === 'connect' && value === 'state') {
+      notes.push(info('connect=state появился позже OptiFine клиента: заменён на connect=block.'))
+      return `${indent}connect${eq}block`
+    }
+    if (key === 'symmetry' && !/^(none|opposite|all)$/.test(value)) {
+      notes.push(info(`symmetry=${value} нет в OptiFine 1.12 — строка убрана.`))
+      return null
+    }
+
+    if (key === 'tiles') {
+      const tiles = value.split(/\s+/).filter(Boolean).map((tile) => {
+        if (OPTIFINE_PATH.test(tile)) return toMcpatcherPath(tile)
+        const bare = /^([a-z0-9_]*[a-z_][a-z0-9_]*)(?:\.png)?$/i.exec(tile)?.[1]
+        if (bare && ctx.hasLocalTile && !ctx.hasLocalTile(bare)) {
+          const name = getTileNames(`block/${bare}`, ctx.resolved, idx)[0]
+          return name.startsWith('textures/') ? name : `textures/blocks/${name}`
+        }
+        const block = /^(?:minecraft:)?(?:textures\/)?block\/(.+?)(?:\.png)?$/.exec(tile)
+        if (!block) return tile
+        const name = getTileNames(`block/${block[1]}`, ctx.resolved, idx)[0]
+        return name.startsWith('textures/') ? name : `textures/blocks/${name}`
+      })
+      return `${indent}${key}${eq}${tiles.join(' ')}`
+    }
+
     if (key === 'matchTiles' || key === 'connectTiles') {
       const tiles = [...new Set(value.split(/\s+/).filter(Boolean).flatMap((tile) => getTileNames(tile, ctx.resolved, idx)))]
       return `${indent}${key}${eq}${tiles.join(' ')}`
@@ -397,11 +436,14 @@ export function convertProperties(text: string, idx: ClientIndex, ctx: Propertie
       if (!/^(i?regex|i?pattern):/.test(value) && !POTIONS.has(potion)) disable(`Правило CIT отключено: зелья «${potion}» нет в 1.12.`)
     }
 
-    return line
+    const converted = line
       .replace(/textures\/block\//g, 'textures/blocks/')
       .replace(/textures\/item\//g, 'textures/items/')
-      .replace(/(^|[=\s])minecraft:block\//g, '$1blocks/')
-      .replace(/(^|[=\s])minecraft:item\//g, '$1items/')
+      .replace(/(^|[=\s])minecraft:block\//g, '$1textures/blocks/')
+      .replace(/(^|[=\s])minecraft:item\//g, '$1textures/items/')
+      .replace(/(^|[=\s])(?:minecraft:)?(?:optifine\/|~\/)/g, '$1mcpatcher/')
+    // диапазон «39..60» появился позже — в 1.12 только «39-60»
+    return key.startsWith('nbt.') || key.startsWith('name') ? converted : converted.replace(/(\d)\.\.(-?\d)/g, '$1-$2')
   }).filter((line): line is string => line !== null)
 
   if (!isCit && extraLines.length) extraLines.length = 0
