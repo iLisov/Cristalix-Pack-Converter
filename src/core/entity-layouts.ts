@@ -1,9 +1,13 @@
 // Размеры текстур мобов 1.12 при 16×: другая пропорция или размер у текстуры пака — значит, модель новая
-// и развёртка на модели 1.12 ляжет кашей (коровы и свиньи 1.21.5 — 64×64, лошади с 1.14 — 64×64).
-const LAYOUTS: [RegExp, number, number][] = [
+// и развёртка на модели 1.12 ляжет кашей (коровы и свиньи 1.21.5 — 64×64, лошади с 1.14 — 64×64,
+// вредина с 1.20 и летучая мышь с 1.20.3 — 32×32).
+// Четвёртое поле — модель сменилась при той же пропорции, и выдаёт её только размер относительно пака.
+const LAYOUTS: [RegExp, number, number, boolean?][] = [
   [/^entity\/(cow\/(cow|mooshroom|red_mooshroom|brown_mooshroom)|pig\/pig(_saddle)?|chicken)$/, 64, 32],
   [/^entity\/sheep\/sheep(_fur)?$/, 64, 32],
-  [/^entity\/horse\/(horse_[a-z_]+|donkey|mule|armor\/horse_armor_[a-z]+)$/, 128, 128],
+  [/^entity\/horse\/(horse_[a-z_]+|donkey|mule|armor\/horse_armor_[a-z]+)$/, 128, 128, true],
+  [/^entity\/illager\/vex(_charging)?$/, 64, 64, true],
+  [/^entity\/bat$/, 64, 64, true],
   [/^entity\/wolf\/wolf(_tame|_angry)?$/, 64, 32],
   [/^entity\/(creeper\/creeper|spider\/(cave_)?spider|enderman\/enderman|skeleton\/(skeleton|wither_skeleton|stray)|slime\/slime|ghast\/ghast|blaze|squid)$/, 64, 32],
   [/^entity\/(zombie\/(zombie|husk)|snowman)$/, 64, 64],
@@ -24,10 +28,10 @@ export function getLayoutMismatch(target: string, data: Uint8Array, scale: numbe
   const layout = LAYOUTS.find(([pattern]) => pattern.test(target))
   const size = pngSize(data)
   if (!layout || !size) return null
-  const [, w, h] = layout
+  const [, w, h, bySize] = layout
   const ratioDiffers = h > 0 && Math.abs(size.w / size.h - w / h) > 0.01
-  // У лошадей пропорция та же 1:1, а модель с 1.14 другая — её выдаёт только размер; у прочих размер — это просто HD
-  const widthDiffers = target.startsWith('entity/horse/') && Math.abs(size.w / scale - w) / w > 0.4
+  // У прочих мобов другой размер при той же пропорции — это просто HD
+  const widthDiffers = bySize && Math.abs(size.w / scale - w) / w > 0.4
   if (!ratioDiffers && !widthDiffers) return null
   return `${size.w}×${size.h}, а в 1.12 — ${w}×${h || '…'} при 16×`
 }

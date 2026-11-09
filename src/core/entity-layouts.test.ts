@@ -21,6 +21,14 @@ describe('раскладка текстур мобов', () => {
     expect(getLayoutMismatch('entity/horse/horse_white', png(256, 256), 2)).toBeNull()
   })
 
+  it('вредина и летучая мышь 1.20+ (32×32) не ложатся на модель игрока 1.12 (64×64)', () => {
+    expect(getLayoutMismatch('entity/illager/vex', png(32, 32), 1)).not.toBeNull()
+    expect(getLayoutMismatch('entity/illager/vex_charging', png(64, 64), 2)).not.toBeNull()
+    expect(getLayoutMismatch('entity/illager/vex', png(64, 64), 1)).toBeNull()
+    expect(getLayoutMismatch('entity/bat', png(32, 32), 1)).not.toBeNull()
+    expect(getLayoutMismatch('entity/bat', png(128, 128), 2)).toBeNull()
+  })
+
   it('мобы без записи в таблице не проверяются', () => {
     expect(getLayoutMismatch('entity/fox/fox', png(48, 32), 1)).toBeNull()
   })
