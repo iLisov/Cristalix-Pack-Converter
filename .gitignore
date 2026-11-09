@@ -3,3 +3,5 @@ dist
 *.log
 .idea/workspace.xml
 .idea/shelf
+tsconfig.tsbuildinfo
+.idea/jsonSchemas.xml
